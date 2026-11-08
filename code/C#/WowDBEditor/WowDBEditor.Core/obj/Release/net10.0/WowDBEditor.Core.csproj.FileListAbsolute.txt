@@ -1,0 +1,13 @@
+G:\WoWTools\DBReader\WoWDBDefs\code\C#\WowDBEditor\WowDBEditor.Core\bin\Release\net10.0\WowDBEditor.Core.deps.json
+G:\WoWTools\DBReader\WoWDBDefs\code\C#\WowDBEditor\WowDBEditor.Core\bin\Release\net10.0\WowDBEditor.Core.dll
+G:\WoWTools\DBReader\WoWDBDefs\code\C#\WowDBEditor\WowDBEditor.Core\bin\Release\net10.0\WowDBEditor.Core.pdb
+G:\WoWTools\DBReader\WoWDBDefs\code\C#\WowDBEditor\WowDBEditor.Core\obj\Release\net10.0\WowDBEditor.Core.csproj.AssemblyReference.cache
+G:\WoWTools\DBReader\WoWDBDefs\code\C#\WowDBEditor\WowDBEditor.Core\obj\Release\net10.0\WowDBEditor.Core.GeneratedMSBuildEditorConfig.editorconfig
+G:\WoWTools\DBReader\WoWDBDefs\code\C#\WowDBEditor\WowDBEditor.Core\obj\Release\net10.0\WowDBEditor.Core.AssemblyInfoInputs.cache
+G:\WoWTools\DBReader\WoWDBDefs\code\C#\WowDBEditor\WowDBEditor.Core\obj\Release\net10.0\WowDBEditor.Core.AssemblyInfo.cs
+G:\WoWTools\DBReader\WoWDBDefs\code\C#\WowDBEditor\WowDBEditor.Core\obj\Release\net10.0\WowDBEditor.Core.csproj.CoreCompileInputs.cache
+G:\WoWTools\DBReader\WoWDBDefs\code\C#\WowDBEditor\WowDBEditor.Core\obj\Release\net10.0\WowDBEditor.Core.sourcelink.json
+G:\WoWTools\DBReader\WoWDBDefs\code\C#\WowDBEditor\WowDBEditor.Core\obj\Release\net10.0\WowDBEditor.Core.dll
+G:\WoWTools\DBReader\WoWDBDefs\code\C#\WowDBEditor\WowDBEditor.Core\obj\Release\net10.0\refint\WowDBEditor.Core.dll
+G:\WoWTools\DBReader\WoWDBDefs\code\C#\WowDBEditor\WowDBEditor.Core\obj\Release\net10.0\WowDBEditor.Core.pdb
+G:\WoWTools\DBReader\WoWDBDefs\code\C#\WowDBEditor\WowDBEditor.Core\obj\Release\net10.0\ref\WowDBEditor.Core.dll

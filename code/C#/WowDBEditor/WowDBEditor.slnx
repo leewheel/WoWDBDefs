@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="WowDBEditor.App/WowDBEditor.App.csproj" />
+  <Project Path="WowDBEditor.Core/WowDBEditor.Core.csproj" />
+  <Project Path="WowDBEditor.SmokeTest/WowDBEditor.SmokeTest.csproj" />
+  <Project Path="WowDBEditor.UITest/WowDBEditor.UITest.csproj" />
+</Solution>
