@@ -1,11 +1,13 @@
 using System.Data;
-using System.Globalization;
 
 namespace WowDBEditor.Core;
 
 /// <summary>
-/// 基于 <see cref="DataTable"/> 事件的轻量撤销栈：只记录单元格改动与行的增删，
-/// 行通过主键 ID 定位，避免保存/排序后行对象失效。
+/// 基于 <see cref="DataTable"/> 事件的轻量撤销栈：记录单元格改动与行的增删。
+///
+/// 早期版本用主键 ID 定位行，但很多表（例如 CharBaseInfo 以 RaceID 为键）ID 并不唯一，
+/// 撤销时会改到同 ID 的另一行。现在直接持有 <see cref="DataRow"/> 引用与行序号，
+/// 与 ID 是否唯一无关。
 /// </summary>
 public sealed class TableUndo : IDisposable
 {
@@ -15,13 +17,12 @@ public sealed class TableUndo : IDisposable
     private readonly List<Entry> redo = new();
     private readonly int limit;
 
-    public TableUndo(DataTable table, string idKey, int limit = 5000)
+    /// <param name="idKey">仅用于生成提示文案；定位行不再依赖它。</param>
+    public TableUndo(DataTable table, string idKey = null, int limit = 5000)
     {
         this.table = table;
         this.idKey = idKey;
         this.limit = limit;
-        if (idKey == null)
-            return;
         table.ColumnChanging += OnColumnChanging;
         table.RowDeleting += OnRowDeleting;
         table.RowChanged += OnRowChanged;
@@ -32,7 +33,7 @@ public sealed class TableUndo : IDisposable
 
     public bool CanUndo => undo.Count > 0;
     public bool CanRedo => redo.Count > 0;
-    public bool Enabled => idKey != null;
+    public bool Enabled => true;
 
     public string UndoLabel => CanUndo ? undo[^1].Label : null;
     public string RedoLabel => CanRedo ? redo[^1].Label : null;
@@ -42,59 +43,52 @@ public sealed class TableUndo : IDisposable
 
     private void OnColumnChanging(object sender, DataColumnChangeEventArgs e)
     {
-        if (IsApplying || idKey == null || e.Row.RowState == DataRowState.Added || e.Row.RowState == DataRowState.Detached)
+        if (IsApplying)
             return;
-        if (e.Column.ColumnName == idKey)
-            return; // ID 改动不进撤销栈：主键约束下回滚不可靠
+        if (e.Row.RowState is DataRowState.Added or DataRowState.Detached)
+            return;
 
         var oldValue = e.Row[e.Column, DataRowVersion.Original];
         if (Equals(oldValue, e.ProposedValue))
             return;
 
-        var id = ReadId(e.Row);
-        if (id == null)
-            return;
-
         Push(new EditEntry
         {
-            Id = id.Value,
+            Row = e.Row,
             Column = e.Column.ColumnName,
             OldValue = oldValue,
             NewValue = e.ProposedValue,
-            Label = $"修改 {e.Column.ColumnName}（ID {id.Value}）"
+            Label = $"修改 {e.Column.ColumnName}"
         });
     }
 
     private void OnRowDeleting(object sender, DataRowChangeEventArgs e)
     {
-        if (IsApplying || idKey == null)
+        if (IsApplying)
             return;
         if (e.Row.RowState is DataRowState.Detached or DataRowState.Deleted)
             return; // Remove 阶段会二次触发，忽略
-        var id = ReadId(e.Row);
-        if (id == null)
-            return;
 
         Push(new DeleteEntry
         {
-            Id = id.Value,
+            Row = e.Row,
+            Index = SafeIndexOf(e.Row),
             Values = Snapshot(e.Row),
-            Label = $"删除行（ID {id.Value}）"
+            Label = "删除行"
         });
     }
 
     private void OnRowChanged(object sender, DataRowChangeEventArgs e)
     {
-        if (IsApplying || idKey == null || e.Action != DataRowAction.Add)
-            return;
-        var id = ReadId(e.Row);
-        if (id == null)
+        if (IsApplying || e.Action != DataRowAction.Add)
             return;
 
         Push(new AddEntry
         {
-            Id = id.Value,
-            Label = $"新增行（ID {id.Value}）"
+            Row = e.Row,
+            Index = SafeIndexOf(e.Row),
+            Values = Snapshot(e.Row),
+            Label = "新增行"
         });
     }
 
@@ -155,68 +149,89 @@ public sealed class TableUndo : IDisposable
         {
             case EditEntry edit:
             {
-                var row = FindRow(edit.Id);
-                if (row == null)
-                    throw new InvalidOperationException($"找不到 ID {edit.Id} 的行，无法{(forward ? "重做" : "撤销")}。");
-                row[edit.Column] = forward ? edit.NewValue : edit.OldValue;
+                // 行已被删除就没什么可回滚的，静默跳过而不是报错
+                if (edit.Row.RowState is DataRowState.Deleted or DataRowState.Detached)
+                    return;
+                if (!table.Columns.Contains(edit.Column))
+                    return;
+                edit.Row[edit.Column] = forward ? edit.NewValue : edit.OldValue;
                 break;
             }
+
             case AddEntry add:
             {
                 if (forward)
-                {
-                    if (add.Values == null)
-                        return;
-                    AddRow(add.Values);
-                }
+                    add.Row = InsertRow(add.Values, add.Index);
                 else
-                {
-                    var row = FindRow(add.Id);
-                    if (row == null)
-                        return;
-                    add.Values ??= Snapshot(row);
-                    table.Rows.Remove(row);
-                }
+                    RemoveRow(add.Row);
                 break;
             }
+
             case DeleteEntry delete:
             {
                 if (forward)
                 {
-                    var row = FindRow(delete.Id);
-                    if (row != null)
-                        table.Rows.Remove(row);
+                    RemoveRow(delete.Row);
+                    break;
+                }
+
+                // 行还在集合里（只是被标记删除）就直接复活，位置和原值都能保住；
+                // 若已被 Remove 摘掉，则按快照在原来的位置重建。
+                if (delete.Row is { RowState: DataRowState.Deleted } && ReferenceEquals(delete.Row.Table, table))
+                {
+                    delete.Row.RejectChanges();
                 }
                 else
                 {
-                    if (FindRow(delete.Id) == null)
-                        AddRow(delete.Values);
+                    delete.Row = InsertRow(delete.Values, delete.Index);
                 }
                 break;
             }
         }
     }
 
-    private void AddRow(object[] values)
+    private int SafeIndexOf(DataRow row)
     {
-        // 撤销删除时，表里可能还留着同 ID 的墓碑行，必须先摘掉再插入
-        var idIndex = table.Columns.IndexOf(idKey);
-        if (idIndex >= 0 && idIndex < values.Length && values[idIndex] != null)
+        try
         {
-            try
-            {
-                PurgeDeleted(Convert.ToInt32(values[idIndex], CultureInfo.InvariantCulture));
-            }
-            catch (Exception ex) when (ex is FormatException or InvalidCastException or OverflowException)
-            {
-                // ID 不是整数则交给 DataTable 自己校验
-            }
+            return table.Rows.IndexOf(row);
         }
+        catch
+        {
+            return -1;
+        }
+    }
 
+    private void RemoveRow(DataRow row)
+    {
+        if (row == null || row.RowState == DataRowState.Detached)
+            return;
+        if (!ReferenceEquals(row.Table, table))
+            return;
+        try
+        {
+            table.Rows.Remove(row);
+        }
+        catch (IndexOutOfRangeException)
+        {
+            // 行已经不在集合里（可能被删除操作带走），忽略
+        }
+    }
+
+    private DataRow InsertRow(object[] values, int index)
+    {
         var row = table.NewRow();
         for (var i = 0; i < table.Columns.Count && i < values.Length; i++)
-            row[i] = values[i] ?? (table.Columns[i].DataType == typeof(string) ? string.Empty : DBNull.Value);
-        table.Rows.Add(row);
+        {
+            var value = values[i];
+            row[i] = value ?? (table.Columns[i].DataType == typeof(string) ? string.Empty : DBNull.Value);
+        }
+
+        if (index >= 0 && index <= table.Rows.Count)
+            table.Rows.InsertAt(row, index);
+        else
+            table.Rows.Add(row);
+        return row;
     }
 
     private object[] Snapshot(DataRow row)
@@ -225,46 +240,6 @@ public sealed class TableUndo : IDisposable
         for (var i = 0; i < table.Columns.Count; i++)
             values[i] = row[i, DataRowVersion.Current];
         return values;
-    }
-
-    private void PurgeDeleted(int id)
-    {
-        for (var i = table.Rows.Count - 1; i >= 0; i--)
-        {
-            var row = table.Rows[i];
-            if (row.RowState == DataRowState.Deleted && ReadId(row) == id)
-                table.Rows.Remove(row);
-        }
-    }
-
-    private int? ReadId(DataRow row)
-    {
-        try
-        {
-            var value = row.RowState == DataRowState.Deleted
-                ? row[idKey, DataRowVersion.Original]
-                : row[idKey];
-            if (value == null || value is DBNull)
-                return null;
-            return Convert.ToInt32(value, CultureInfo.InvariantCulture);
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private DataRow FindRow(int id)
-    {
-        foreach (DataRow row in table.Rows)
-        {
-            if (row.RowState is DataRowState.Deleted or DataRowState.Detached)
-                continue;
-            var value = ReadId(row);
-            if (value == id)
-                return row;
-        }
-        return null;
     }
 
     public void Clear()
@@ -276,8 +251,6 @@ public sealed class TableUndo : IDisposable
 
     public void Dispose()
     {
-        if (idKey == null)
-            return;
         table.ColumnChanging -= OnColumnChanging;
         table.RowDeleting -= OnRowDeleting;
         table.RowChanged -= OnRowChanged;
@@ -290,7 +263,7 @@ public sealed class TableUndo : IDisposable
 
     private sealed class EditEntry : Entry
     {
-        public int Id;
+        public DataRow Row;
         public string Column;
         public object OldValue;
         public object NewValue;
@@ -298,13 +271,15 @@ public sealed class TableUndo : IDisposable
 
     private sealed class AddEntry : Entry
     {
-        public int Id;
+        public DataRow Row;
+        public int Index;
         public object[] Values;
     }
 
     private sealed class DeleteEntry : Entry
     {
-        public int Id;
+        public DataRow Row;
+        public int Index;
         public object[] Values;
     }
 }

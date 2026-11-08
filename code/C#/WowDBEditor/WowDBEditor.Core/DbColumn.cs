@@ -7,7 +7,8 @@ public sealed class DbColumn
     public required string Key { get; init; }
     public required string BaseName { get; init; }
     public required Type FieldType { get; init; }
-    public required FieldInfo Field { get; init; }
+    /// <summary>DBCD 路径下的反射字段；WDBC 自研路径没有反射字段，为 null。</summary>
+    public FieldInfo Field { get; init; }
     public bool IsArray { get; init; }
     public int ArrayIndex { get; init; } = -1;
     public bool IsId { get; init; }

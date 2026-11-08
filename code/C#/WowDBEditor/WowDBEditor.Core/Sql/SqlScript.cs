@@ -446,11 +446,20 @@ public static class SqlScriptImporter
         if (replaceAll)
             data.Rows.Clear();
 
-        var existing = new Dictionary<int, DataRow>();
+        // 同一个 ID 可能对应多行（组合键表），按"第几次出现"排队匹配，避免后一行挤掉前一行
+        var existing = new Dictionary<int, Queue<DataRow>>();
         if (hasId)
+        {
             foreach (DataRow row in data.Rows)
-                if (row.RowState != DataRowState.Deleted)
-                    existing[Convert.ToInt32(row[idColumn.Key], CultureInfo.InvariantCulture)] = row;
+            {
+                if (row.RowState == DataRowState.Deleted)
+                    continue;
+                var key = Convert.ToInt32(row[idColumn.Key], CultureInfo.InvariantCulture);
+                if (!existing.TryGetValue(key, out var queue))
+                    existing[key] = queue = new Queue<DataRow>();
+                queue.Enqueue(row);
+            }
+        }
 
         var idIndex = hasId ? mapping.First(m => m.Column.Key == idColumn.Key).Index : -1;
         var inserted = 0;
@@ -473,9 +482,9 @@ public static class SqlScriptImporter
             }
 
             DataRow target;
-            if (hasId && existing.TryGetValue(id, out var found))
+            if (hasId && existing.TryGetValue(id, out var found) && found.Count > 0)
             {
-                target = found;
+                target = found.Dequeue();
                 updated++;
             }
             else
@@ -487,8 +496,8 @@ public static class SqlScriptImporter
                         : Activator.CreateInstance(column.FieldType);
                 if (hasId)
                 {
+                    // 新插入的行不进队列，否则同 ID 的后续行会互相覆盖
                     target[idColumn.Key] = id;
-                    existing[id] = target;
                 }
                 data.Rows.Add(target);
                 inserted++;

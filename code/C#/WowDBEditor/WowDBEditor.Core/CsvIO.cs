@@ -69,11 +69,21 @@ public static class CsvIO
         if (replaceAll)
             data.Rows.Clear();
 
-        var existing = new Dictionary<int, DataRow>();
+        // 同一个 ID 可能对应多行（例如 CharBaseInfo 以 RaceID 为键，一个种族有多条），
+        // 所以按"第几次出现"排队匹配，而不是用字典直接覆盖，否则会丢掉重复行。
+        var existing = new Dictionary<int, Queue<DataRow>>();
         if (hasId)
+        {
             foreach (DataRow row in data.Rows)
-                if (row.RowState != DataRowState.Deleted)
-                    existing[Convert.ToInt32(row[idColumn.Key], CultureInfo.InvariantCulture)] = row;
+            {
+                if (row.RowState == DataRowState.Deleted)
+                    continue;
+                var key = Convert.ToInt32(row[idColumn.Key], CultureInfo.InvariantCulture);
+                if (!existing.TryGetValue(key, out var queue))
+                    existing[key] = queue = new Queue<DataRow>();
+                queue.Enqueue(row);
+            }
+        }
 
         var inserted = 0;
         var updated = 0;
@@ -99,9 +109,9 @@ public static class CsvIO
             }
 
             DataRow target;
-            if (hasId && existing.TryGetValue(id, out var found))
+            if (hasId && existing.TryGetValue(id, out var found) && found.Count > 0)
             {
-                target = found;
+                target = found.Dequeue();
                 updated++;
             }
             else
@@ -113,8 +123,9 @@ public static class CsvIO
                         : Activator.CreateInstance(column.FieldType);
                 if (hasId)
                 {
+                    // 新插入的行不要再进队列：CSV 里同一个 ID 出现多次时，
+                    // 后面的行应该各自新增，而不是互相覆盖。
                     target[idColumn.Key] = id;
-                    existing[id] = target;
                 }
                 data.Rows.Add(target);
                 inserted++;

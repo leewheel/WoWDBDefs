@@ -106,6 +106,14 @@ public partial class MainWindow : Window
             InfoText.Text = "未打开文件";
             return;
         }
+        if (currentTable.IsGeneric)
+        {
+            InfoText.Text = $"{currentTable.FilePath}    格式: {currentTable.Format}    " +
+                            $"{currentTable.UnresolvedReason} → 原始数值模式    行数: {currentTable.RowCount:N0}    " +
+                            $"列数: {currentTable.Columns.Count}    记录: {currentTable.RecordSize}B";
+            return;
+        }
+
         // 优先显示真正生效的版本（区间定义会落在具体某个 build 上），而不是定义块里列的版本
         var version = openedBuild ?? currentTable.BuildString ?? GetVersionLabel();
         InfoText.Text = $"{currentTable.FilePath}    格式: {currentTable.Format}    版本: {version}    " +
@@ -264,6 +272,17 @@ public partial class MainWindow : Window
         {
             MessageBox.Show(this, ex.Message, "打开失败", MessageBoxButton.OK, MessageBoxImage.Error);
             return;
+        }
+
+        if (table.IsGeneric)
+        {
+            var nl2 = Environment.NewLine;
+            MessageBox.Show(this,
+                $"这张表没能匹配到可用的结构定义：{table.UnresolvedReason}。" + nl2 + nl2 +
+                "已按「原始数值模式」打开：列名是 ID / Field_1 / Field_2 …，单元格里是文件中的原始整数。" + nl2 +
+                "可以查看、修改、保存，但编辑器不知道每个字段的含义。" + nl2 + nl2 +
+                "想按字段名编辑的话，需要把对应的 .dbd 定义文件放进 definitions 目录。",
+                "原始数值模式", MessageBoxButton.OK, MessageBoxImage.Information);
         }
 
         // 记录长度不一致 = 文件里有定义没覆盖到的字段（自定义列）或版本选错了，必须先提醒
