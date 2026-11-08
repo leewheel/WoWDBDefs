@@ -1,0 +1,3 @@
+G:\WoWTools\DBReader\DBC_DB2Editor\WowDBEditor.pdb
+G:\WoWTools\DBReader\DBC_DB2Editor\WowDBEditor.Core.pdb
+G:\WoWTools\DBReader\DBC_DB2Editor\WowDBEditor.exe

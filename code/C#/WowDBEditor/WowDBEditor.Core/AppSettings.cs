@@ -11,6 +11,22 @@ public sealed class AppSettings
     public int MySqlPort { get; set; } = 3306;
     public string MySqlUser { get; set; } = "root";
     public string MySqlDatabase { get; set; } = "wowdbeditor";
+    public List<string> RecentFiles { get; set; } = new();
+    public bool ShowDetailPane { get; set; } = true;
+    public double DetailPaneWidth { get; set; } = 380;
+    /// <summary>表名 → 上次手动选择的 BUILD，老格式（WDBC）没有 LayoutHash 时靠它免去重复选择。</summary>
+    public Dictionary<string, string> BuildOverrides { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public void AddRecentFile(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return;
+        path = Path.GetFullPath(path);
+        RecentFiles.RemoveAll(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase));
+        RecentFiles.Insert(0, path);
+        while (RecentFiles.Count > 10)
+            RecentFiles.RemoveAt(RecentFiles.Count - 1);
+    }
 
     private static string SettingsPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "WowDBEditor", "settings.json");

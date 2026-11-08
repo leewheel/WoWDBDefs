@@ -2,6 +2,7 @@ using System.Data;
 using System.Globalization;
 using WowDBEditor.Core;
 using WowDBEditor.Core.MySql;
+using WowDBEditor.Core.Sql;
 
 CultureInfo.DefaultThreadCurrentCulture = CultureInfo.InvariantCulture;
 
@@ -96,6 +97,162 @@ static void RunCase((string Name, string Path, string Build) testCase, Definitio
     if (data.Rows.Count > 0 && !dumpText.Contains("INSERT INTO"))
         throw new Exception("SQL dump 缺少 INSERT");
     Console.WriteLine($"  sql dump OK ({new FileInfo(dumpPath).Length} bytes)");
+
+    RunCsvCase(testCase, definitions, workDir, table, data);
+    RunUndoCase(testCase, definitions, table, data);
+    RunSqlScriptCase(testCase, definitions, workDir, table, data);
+
+static void RunSqlScriptCase((string Name, string Path, string Build) testCase, DefinitionService definitions,
+    string workDir, DbTable table, DataTable data)
+{
+    var idempotentPath = Path.Combine(workDir, table.TableName + ".idempotent.sql");
+    SqlDump.Write(table, data, idempotentPath, table.TableName, SqlDumpOptions.Idempotent());
+    var text = File.ReadAllText(idempotentPath);
+    if (!text.Contains("CREATE TABLE IF NOT EXISTS") || !text.Contains("ON DUPLICATE KEY UPDATE"))
+        throw new Exception("幂等 SQL 缺少 IF NOT EXISTS / ON DUPLICATE KEY UPDATE");
+    if (text.Contains("DROP TABLE IF EXISTS"))
+        throw new Exception("幂等 SQL 不应包含 DROP TABLE");
+
+    var rebuildPath = Path.Combine(workDir, table.TableName + ".rebuild.sql");
+    SqlDump.Write(table, data, rebuildPath, table.TableName, SqlDumpOptions.Rebuild());
+    if (!File.ReadAllText(rebuildPath).Contains("DROP TABLE IF EXISTS"))
+        throw new Exception("完整重建 SQL 缺少 DROP TABLE IF EXISTS");
+
+    var expectedRows = data.AsEnumerable().Count(r => r.RowState != DataRowState.Deleted);
+
+    using var target = DbTable.Open(testCase.Path, definitions, testCase.Build);
+    var targetData = target.CreateDataTable();
+    var first = SqlScriptImporter.Apply(target, targetData, idempotentPath, replaceAll: true);
+    if (targetData.Rows.Count != expectedRows)
+        throw new Exception($"SQL 导入行数不一致: {targetData.Rows.Count} vs {expectedRows}");
+
+    // 再导一次，验证幂等（不重复插入）
+    var second = SqlScriptImporter.Apply(target, targetData, idempotentPath, replaceAll: false);
+    if (targetData.Rows.Count != expectedRows)
+        throw new Exception($"幂等重放后行数变化: {targetData.Rows.Count} vs {expectedRows}");
+    if (second.Inserted != 0)
+        throw new Exception($"幂等重放不应新增行，实际新增 {second.Inserted}");
+
+    var index = new Dictionary<object, DataRow>();
+    foreach (DataRow row in targetData.Rows)
+        index[row[target.IdColumn.Key]] = row;
+    foreach (DataRow row in data.Rows)
+    {
+        if (row.RowState == DataRowState.Deleted)
+            continue;
+        if (!index.TryGetValue(row[table.IdColumn.Key], out var other))
+            throw new Exception($"SQL 导入丢失 ID={row[table.IdColumn.Key]}");
+        foreach (var column in table.Columns)
+        {
+            var a = row[column.Key];
+            var b = other[column.Key];
+            if (column.FieldType == typeof(float))
+            {
+                if (Math.Abs((float)Convert.ChangeType(a, typeof(float)) - (float)Convert.ChangeType(b, typeof(float))) > 1e-6f)
+                    throw new Exception($"SQL 浮点不一致 ID={row[table.IdColumn.Key]} col={column.Key}: [{a}] vs [{b}]");
+            }
+            else if (!Equals(a, b))
+                throw new Exception($"SQL 单元格不一致 ID={row[table.IdColumn.Key]} col={column.Key}: [{a}] vs [{b}]");
+        }
+    }
+    Console.WriteLine($"  sql script OK (idempotent insert={first.Inserted}, update={first.Updated}, replay=0/{second.Updated})");
+}
+
+static void RunCsvCase((string Name, string Path, string Build) testCase, DefinitionService definitions, string workDir,
+    DbTable table, DataTable data)
+{
+    var csvPath = Path.Combine(workDir, table.TableName + ".csv");
+    CsvIO.Export(table, data, csvPath);
+
+    using var target = DbTable.Open(testCase.Path, definitions, testCase.Build);
+    var targetData = target.CreateDataTable();
+    var result = CsvIO.Import(target, targetData, csvPath, replaceAll: true);
+    if (targetData.Rows.Count != data.Rows.Count)
+        throw new Exception($"CSV 导入行数不一致: {targetData.Rows.Count} vs {data.Rows.Count}");
+
+    var index = new Dictionary<object, DataRow>();
+    foreach (DataRow row in targetData.Rows)
+        index[row[target.IdColumn.Key]] = row;
+
+    foreach (DataRow row in data.Rows)
+    {
+        if (row.RowState == DataRowState.Deleted)
+            continue;
+        if (!index.TryGetValue(row[table.IdColumn.Key], out var other))
+            throw new Exception($"CSV 导入丢失 ID={row[table.IdColumn.Key]}");
+        foreach (var column in table.Columns)
+        {
+            var a = row[column.Key];
+            var b = other[column.Key];
+            if (column.FieldType == typeof(float))
+            {
+                if (Math.Abs((float)Convert.ChangeType(a, typeof(float)) - (float)Convert.ChangeType(b, typeof(float))) > 1e-6f)
+                    throw new Exception($"CSV 浮点不一致 ID={row[table.IdColumn.Key]} col={column.Key}: [{a}] vs [{b}]");
+            }
+            else if (!Equals(a, b))
+                throw new Exception($"CSV 单元格不一致 ID={row[table.IdColumn.Key]} col={column.Key}: [{a}] vs [{b}]");
+        }
+    }
+    Console.WriteLine($"  csv round-trip OK (inserted={result.Inserted}, skipped={result.Skipped})");
+}
+
+static void RunUndoCase((string Name, string Path, string Build) testCase, DefinitionService definitions, DbTable table, DataTable data)
+{
+    if (table.IdColumn == null || data.Rows.Count == 0)
+        return;
+
+    using var reopened = DbTable.Open(testCase.Path, definitions, testCase.Build);
+    var work = reopened.CreateDataTable();
+    using var undo = new TableUndo(work, reopened.IdColumn.Key);
+
+    var column = reopened.Columns.First(c => !c.IsId && c.FieldType == typeof(string));
+    var id = work.Rows[0][reopened.IdColumn.Key];
+    var before = work.Rows[0][column.Key];
+    work.Rows[0][column.Key] = "UNDO_TEST_VALUE";
+    if (undo.UndoCount != 1) throw new Exception($"撤销栈记录数异常: {undo.UndoCount}");
+    if (!undo.CanUndo) throw new Exception("撤销栈不可用");
+
+    undo.Undo();
+    if (!Equals(work.Rows[0][column.Key], before))
+        throw new Exception($"撤销未恢复原值: [{work.Rows[0][column.Key]}] != [{before}]");
+    undo.Redo();
+    if (!Equals(work.Rows[0][column.Key], "UNDO_TEST_VALUE"))
+        throw new Exception($"重做未生效: [{work.Rows[0][column.Key]}]");
+
+    var rowCount = CountAlive(work);
+    var deleteRow = work.Rows[0];
+    deleteRow.Delete();
+    undo.Undo();
+    if (CountAlive(work) != rowCount)
+        throw new Exception($"撤销删除后行数异常: {work.Rows.Count} vs {rowCount}");
+
+    // 应用里删除是 Delete + Rows.Remove：验证不会重复入栈、撤销能恢复
+    var removed = work.Rows[0];
+    removed.Delete();
+    work.Rows.Remove(removed);
+    undo.Undo();
+    if (CountAlive(work) != rowCount)
+        throw new Exception($"Delete+Remove 撤销后行数异常: {CountAlive(work)} vs {rowCount}");
+
+    var newRow = work.NewRow();
+    foreach (var col in reopened.Columns)
+        newRow[col.Key] = col.FieldType == typeof(string) ? "新增" : Activator.CreateInstance(col.FieldType);
+    var maxId = work.AsEnumerable().Where(r => r.RowState != DataRowState.Deleted)
+        .Select(r => Convert.ToInt32(r[reopened.IdColumn.Key], CultureInfo.InvariantCulture)).DefaultIfEmpty(0).Max();
+    newRow[reopened.IdColumn.Key] = maxId + 1;
+    work.Rows.Add(newRow);
+    undo.Undo();
+    if (CountAlive(work) != rowCount)
+        throw new Exception($"撤销新增后行数异常: {CountAlive(work)} vs {rowCount}");
+    undo.Redo();
+    if (CountAlive(work) != rowCount + 1)
+        throw new Exception($"重做新增后行数异常: {CountAlive(work)} vs {rowCount + 1}");
+
+    Console.WriteLine($"  undo/redo OK (id={id}, col={column.Key})");
+}
+
+static int CountAlive(DataTable table) =>
+    table.Rows.Cast<DataRow>().Count(r => r.RowState != DataRowState.Deleted);
 }
 
 static void CompareTables(DbTable t1, DataTable d1, DbTable t2, DataTable d2)

@@ -4,26 +4,55 @@ using System.Text;
 
 namespace WowDBEditor.Core.MySql;
 
+/// <summary>
+/// SQL 导出选项。<see cref="IncludeDrop"/> 为 true 时是「完整重建」，否则是「幂等增量」：
+/// 只建表（IF NOT EXISTS）+ UPSERT 数据，脚本可以重复执行而结果不变。
+/// </summary>
+public sealed record SqlDumpOptions
+{
+    public bool IncludeDrop { get; init; } = true;
+    public bool Upsert { get; init; }
+    public bool CreateIfNotExists { get; init; }
+    public int RowsPerInsert { get; init; } = 200;
+
+    public static SqlDumpOptions Rebuild() => new() { IncludeDrop = true, Upsert = false };
+
+    public static SqlDumpOptions Idempotent() => new()
+    {
+        IncludeDrop = false,
+        Upsert = true,
+        CreateIfNotExists = true
+    };
+}
+
 public static class SqlDump
 {
     public static void Write(DbTable table, DataTable data, string path, string targetTable, bool includeDrop,
         IProgress<TransferProgress> progress = null, CancellationToken ct = default)
+        => Write(table, data, path, targetTable,
+            includeDrop ? SqlDumpOptions.Rebuild() : SqlDumpOptions.Idempotent(), progress, ct);
+
+    public static void Write(DbTable table, DataTable data, string path, string targetTable, SqlDumpOptions options,
+        IProgress<TransferProgress> progress = null, CancellationToken ct = default)
     {
+        options ??= SqlDumpOptions.Rebuild();
         var columns = table.Columns;
         var rows = data.AsEnumerable().Where(r => r.RowState != DataRowState.Deleted).ToList();
-        const int rowsPerInsert = 200;
+        var rowsPerInsert = Math.Max(1, options.RowsPerInsert);
 
         using var writer = new StreamWriter(path, false, new UTF8Encoding(false));
         writer.WriteLine("-- WowDBEditor SQL dump");
         writer.WriteLine("-- Source: " + table.FilePath);
+        writer.WriteLine($"-- Table: {targetTable}  Rows: {rows.Count}  Mode: {(options.IncludeDrop ? "rebuild" : "idempotent upsert")}");
+        writer.WriteLine("-- 该脚本可重复执行，结果一致。");
         writer.WriteLine("SET NAMES utf8mb4;");
         writer.WriteLine("SET FOREIGN_KEY_CHECKS=0;");
         writer.WriteLine();
 
-        if (includeDrop)
+        if (options.IncludeDrop)
             writer.WriteLine($"DROP TABLE IF EXISTS {MySqlService.QuoteIdentifier(targetTable)};");
 
-        writer.Write($"CREATE TABLE {MySqlService.QuoteIdentifier(targetTable)} (");
+        writer.Write($"CREATE TABLE {(options.CreateIfNotExists ? "IF NOT EXISTS " : "")}{MySqlService.QuoteIdentifier(targetTable)} (");
         for (var i = 0; i < columns.Count; i++)
         {
             if (i > 0) writer.Write(", ");
@@ -35,6 +64,7 @@ public static class SqlDump
         writer.WriteLine();
 
         var columnList = string.Join(", ", columns.Select(c => MySqlService.QuoteIdentifier(c.Key)));
+        var upsertClause = options.Upsert ? BuildUpsertClause(table) : "";
         var done = 0;
         for (var offset = 0; offset < rows.Count; offset += rowsPerInsert)
         {
@@ -52,6 +82,7 @@ public static class SqlDump
                 }
                 writer.Write(')');
             }
+            writer.Write(upsertClause);
             writer.WriteLine(";");
             done += count;
             progress?.Report(new TransferProgress(done, rows.Count));
@@ -59,6 +90,16 @@ public static class SqlDump
 
         writer.WriteLine();
         writer.WriteLine("SET FOREIGN_KEY_CHECKS=1;");
+    }
+
+    /// <summary>ON DUPLICATE KEY UPDATE 子句（主键列不参与更新）。</summary>
+    private static string BuildUpsertClause(DbTable table)
+    {
+        var updatable = table.Columns
+            .Where(c => table.IdColumn == null || c.Key != table.IdColumn.Key)
+            .Select(c => $"{MySqlService.QuoteIdentifier(c.Key)}=VALUES({MySqlService.QuoteIdentifier(c.Key)})")
+            .ToList();
+        return updatable.Count == 0 ? "" : " ON DUPLICATE KEY UPDATE " + string.Join(", ", updatable);
     }
 
     private static string FormatLiteral(object value)

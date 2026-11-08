@@ -57,7 +57,21 @@ public sealed class DefinitionService
             foreach (var range in version.buildRanges)
                 choices.Add(($"BUILD {range.minBuild} ~ {range.maxBuild}{layouts}", range.minBuild.ToString()));
         }
-        return choices;
+        return choices
+            .OrderByDescending(c => ParseBuild(c.Item2))
+            .ToList();
+    }
+
+    private static Version ParseBuild(string build)
+    {
+        try
+        {
+            return new Version(build);
+        }
+        catch
+        {
+            return new Version(0, 0, 0);
+        }
     }
 
     public static string FindDefinitionsDirectory(string startDirectory)

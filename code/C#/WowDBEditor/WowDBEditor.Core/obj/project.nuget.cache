@@ -1,13 +1,17 @@
 {
   "version": 2,
-  "dgSpecHash": "pClcE/Gv2mI=",
+  "dgSpecHash": "Pc0WY0UVwTY=",
   "success": true,
   "projectFilePath": "G:\\WoWTools\\DBReader\\WoWDBDefs\\code\\C#\\WowDBEditor\\WowDBEditor.Core\\WowDBEditor.Core.csproj",
   "expectedPackageFiles": [
     "C:\\Users\\leewheel\\.nuget\\packages\\dbcd.io\\2.3.0\\dbcd.io.2.3.0.nupkg.sha512",
     "C:\\Users\\leewheel\\.nuget\\packages\\microsoft.extensions.dependencyinjection.abstractions\\8.0.2\\microsoft.extensions.dependencyinjection.abstractions.8.0.2.nupkg.sha512",
     "C:\\Users\\leewheel\\.nuget\\packages\\microsoft.extensions.logging.abstractions\\8.0.2\\microsoft.extensions.logging.abstractions.8.0.2.nupkg.sha512",
-    "C:\\Users\\leewheel\\.nuget\\packages\\mysqlconnector\\2.6.2\\mysqlconnector.2.6.2.nupkg.sha512"
+    "C:\\Users\\leewheel\\.nuget\\packages\\microsoft.net.illink.tasks\\10.0.8\\microsoft.net.illink.tasks.10.0.8.nupkg.sha512",
+    "C:\\Users\\leewheel\\.nuget\\packages\\mysqlconnector\\2.6.2\\mysqlconnector.2.6.2.nupkg.sha512",
+    "C:\\Users\\leewheel\\.nuget\\packages\\microsoft.netcore.app.runtime.win-x64\\10.0.8\\microsoft.netcore.app.runtime.win-x64.10.0.8.nupkg.sha512",
+    "C:\\Users\\leewheel\\.nuget\\packages\\microsoft.windowsdesktop.app.runtime.win-x64\\10.0.8\\microsoft.windowsdesktop.app.runtime.win-x64.10.0.8.nupkg.sha512",
+    "C:\\Users\\leewheel\\.nuget\\packages\\microsoft.aspnetcore.app.runtime.win-x64\\10.0.8\\microsoft.aspnetcore.app.runtime.win-x64.10.0.8.nupkg.sha512"
   ],
   "logs": []
 }

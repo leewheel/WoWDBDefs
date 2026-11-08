@@ -1,28 +1,47 @@
 <Window x:Class="WowDBEditor.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="WowDBEditor" Width="1280" Height="800" Icon="Assets/app.ico"
-        WindowStartupLocation="CenterScreen" Closing="Window_Closing">
+        Title="WoW DBC/DB2 修改器" Width="1440" Height="880" MinWidth="960" MinHeight="560"
+        Icon="Assets/app.ico" WindowStartupLocation="CenterScreen" Closing="Window_Closing">
     <DockPanel>
         <Menu DockPanel.Dock="Top">
             <MenuItem Header="文件(_F)">
                 <MenuItem Header="打开…" Command="ApplicationCommands.Open" InputGestureText="Ctrl+O"/>
+                <MenuItem x:Name="MenuRecent" Header="最近打开"/>
+                <Separator/>
                 <MenuItem Header="保存" Command="ApplicationCommands.Save" InputGestureText="Ctrl+S"/>
                 <MenuItem Header="另存为…" Command="ApplicationCommands.SaveAs" InputGestureText="Ctrl+Shift+S"/>
                 <Separator/>
                 <MenuItem Header="退出" Click="Exit_Click"/>
             </MenuItem>
-            <MenuItem Header="MySQL(_M)">
-                <MenuItem x:Name="MenuExportMySql" Header="导出到 MySQL…" Click="ExportMySql_Click"/>
-                <MenuItem x:Name="MenuImportMySql" Header="从 MySQL 导入…" Click="ImportMySql_Click"/>
+            <MenuItem Header="编辑(_E)">
+                <MenuItem Header="撤销" Command="ApplicationCommands.Undo" InputGestureText="Ctrl+Z"/>
+                <MenuItem Header="重做" Command="ApplicationCommands.Redo" InputGestureText="Ctrl+Y"/>
                 <Separator/>
-                <MenuItem x:Name="MenuExportSql" Header="导出 SQL 文件…" Click="ExportSqlFile_Click"/>
+                <MenuItem x:Name="MenuDuplicateRow" Header="复制当前行" Click="DuplicateRow_Click"/>
+                <MenuItem x:Name="MenuDeleteRow" Header="删除选中行" Click="DeleteRows_Click"/>
+            </MenuItem>
+            <MenuItem Header="数据(_D)">
+                <MenuItem x:Name="MenuExportCsv" Header="导出 CSV…" Click="ExportCsv_Click"/>
+                <MenuItem x:Name="MenuImportCsv" Header="从 CSV 导入…（按 ID 合并）" Click="ImportCsv_Click"/>
+                <Separator/>
+                <MenuItem x:Name="MenuExportSql" Header="导出 MySQL SQL 文件…（可重复执行）" Click="ExportSqlFile_Click"/>
+                <MenuItem x:Name="MenuImportSql" Header="从 SQL 文件导入…（幂等合并）" Click="ImportSqlFile_Click"/>
+                <Separator/>
+                <MenuItem x:Name="MenuExportMySql" Header="导出到 MySQL 数据库…" Click="ExportMySql_Click"/>
+                <MenuItem x:Name="MenuImportMySql" Header="从 MySQL 数据库导入…" Click="ImportMySql_Click"/>
+            </MenuItem>
+            <MenuItem Header="视图(_V)">
+                <MenuItem x:Name="MenuToggleDetail" Header="显示字段面板" IsCheckable="True" IsChecked="True"
+                          Click="ToggleDetail_Click"/>
+                <MenuItem Header="显示全部列" Click="ShowAllColumns_Click"/>
             </MenuItem>
             <MenuItem Header="工具(_T)">
                 <MenuItem Header="设置…" Click="Settings_Click"/>
                 <MenuItem Header="重新加载定义缓存" Click="ReloadDefinitions_Click"/>
             </MenuItem>
             <MenuItem Header="帮助(_H)">
+                <MenuItem Header="使用说明" Click="Help_Click"/>
                 <MenuItem Header="关于" Click="About_Click"/>
             </MenuItem>
         </Menu>
@@ -33,29 +52,68 @@
                 <Button Content="保存" Command="ApplicationCommands.Save"/>
                 <Button Content="另存为" Command="ApplicationCommands.SaveAs"/>
                 <Separator/>
+                <Button x:Name="BtnUndo" Content="撤销" Command="ApplicationCommands.Undo"/>
+                <Button x:Name="BtnRedo" Content="重做" Command="ApplicationCommands.Redo"/>
+                <Separator/>
                 <Button x:Name="BtnAddRow" Content="添加行" Click="AddRow_Click"/>
+                <Button x:Name="BtnDuplicateRow" Content="复制行" Click="DuplicateRow_Click"/>
                 <Button x:Name="BtnDeleteRow" Content="删除行" Click="DeleteRows_Click"/>
                 <Separator/>
-                <Button x:Name="BtnExportMySql" Content="导出 MySQL" Click="ExportMySql_Click"/>
-                <Button x:Name="BtnImportMySql" Content="导入 MySQL" Click="ImportMySql_Click"/>
-                <Button x:Name="BtnExportSql" Content="SQL 文件" Click="ExportSqlFile_Click"/>
+                <Button x:Name="BtnExportCsv" Content="CSV 导出" Click="ExportCsv_Click"/>
+                <Button x:Name="BtnImportCsv" Content="CSV 导入" Click="ImportCsv_Click"/>
+                <Button x:Name="BtnExportSql" Content="SQL 导出" Click="ExportSqlFile_Click"/>
+                <Button x:Name="BtnImportSql" Content="SQL 导入" Click="ImportSqlFile_Click"/>
+                <Separator/>
+                <Button x:Name="BtnExportMySql" Content="MySQL 导出" Click="ExportMySql_Click"/>
+                <Button x:Name="BtnImportMySql" Content="MySQL 导入" Click="ImportMySql_Click"/>
             </ToolBar>
         </ToolBarTray>
 
         <Border DockPanel.Dock="Top" Background="{StaticResource PanelBackground}"
-                BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="10,6">
+                BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="10,5">
             <TextBlock x:Name="InfoText" TextTrimming="CharacterEllipsis"
                        Foreground="{StaticResource MutedForeground}" Text="未打开文件"/>
         </Border>
 
         <Border DockPanel.Dock="Top" Background="{StaticResource WindowBackground}" Padding="10,6">
-            <StackPanel Orientation="Horizontal">
-                <TextBlock Text="筛选：" Margin="0,0,6,0"/>
-                <TextBox x:Name="FilterBox" Width="300" TextChanged="FilterBox_TextChanged"
-                         ToolTip="输入 ID 精确匹配；输入文本在所有字符串列中模糊匹配"/>
-                <Button Content="清除" Margin="8,0,0,0" Click="ClearFilter_Click"/>
-                <TextBlock x:Name="MatchCount" Margin="12,0,0,0" Foreground="{StaticResource MutedForeground}"/>
-            </StackPanel>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="筛选：" Margin="0,0,6,0"/>
+                <TextBox x:Name="FilterBox" Grid.Column="1" Width="320" TextChanged="FilterBox_TextChanged"
+                         ToolTip="输入 ID 精确匹配；输入文本在所有字符串列中模糊匹配；Ctrl+F 聚焦"/>
+                <Button Grid.Column="2" Content="清除" Margin="8,0,0,0" Click="ClearFilter_Click"/>
+                <TextBlock x:Name="MatchCount" Grid.Column="3" Margin="12,0,0,0" Foreground="{StaticResource MutedForeground}"/>
+                <TextBlock x:Name="SelectionText" Grid.Column="4" Margin="16,0,0,0" Foreground="{StaticResource Accent}"/>
+                <StackPanel Grid.Column="6" Orientation="Horizontal">
+                    <ToggleButton x:Name="BtnColumns" Content="列 ▾" Click="Columns_Click"/>
+                    <Popup x:Name="ColumnPopup" PlacementTarget="{Binding ElementName=BtnColumns}"
+                           Placement="Bottom" StaysOpen="False" AllowsTransparency="True">
+                        <Border Background="{StaticResource PanelBackground}" BorderBrush="{StaticResource BorderBrush}"
+                                BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,4,0,0">
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
+                                    <Button Content="全选" Padding="8,3" Margin="0,0,6,0" Click="ColumnsAll_Click"/>
+                                    <Button Content="反选" Padding="8,3" Click="ColumnsInvert_Click"/>
+                                </StackPanel>
+                                <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="380">
+                                    <StackPanel x:Name="ColumnList" MinWidth="240"/>
+                                </ScrollViewer>
+                            </DockPanel>
+                        </Border>
+                    </Popup>
+                </StackPanel>
+                <ToggleButton x:Name="BtnToggleDetail" Grid.Column="7" Content="字段面板" Margin="8,0,0,0"
+                              IsChecked="True" Click="ToggleDetail_Click"/>
+            </Grid>
         </Border>
 
         <StatusBar DockPanel.Dock="Bottom">
@@ -67,7 +125,54 @@
             </StatusBarItem>
         </StatusBar>
 
-        <DataGrid x:Name="Grid" FrozenColumnCount="1" IsReadOnly="False"
-                  CellEditEnding="Grid_CellEditEnding"/>
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" MinWidth="360"/>
+                <ColumnDefinition Width="5"/>
+                <ColumnDefinition x:Name="DetailColumn" Width="380" MinWidth="240"/>
+            </Grid.ColumnDefinitions>
+
+            <DataGrid x:Name="Grid" Grid.Column="0" FrozenColumnCount="1" IsReadOnly="False"
+                      HeadersVisibility="All"
+                      CellEditEnding="Grid_CellEditEnding" SelectionChanged="Grid_SelectionChanged"
+                      LoadingRow="Grid_LoadingRow"/>
+
+            <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch"
+                          Background="{StaticResource BorderBrush}" ShowsPreview="False"/>
+
+            <Border x:Name="DetailPane" Grid.Column="2" Background="{StaticResource PanelBackground}"
+                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1,0,0,0">
+                <DockPanel>
+                    <Border DockPanel.Dock="Top" Padding="10,6" BorderBrush="{StaticResource BorderBrush}"
+                            BorderThickness="0,0,0,1">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock x:Name="DetailTitle" Text="行详情" FontWeight="SemiBold"/>
+                            <ToggleButton x:Name="TabFields" Grid.Column="1" Content="字段" Style="{StaticResource PaneTab}"
+                                          IsChecked="True" Click="TabFields_Click"/>
+                            <ToggleButton x:Name="TabStructure" Grid.Column="2" Content="结构" Style="{StaticResource PaneTab}"
+                                          Click="TabStructure_Click"/>
+                        </Grid>
+                    </Border>
+                    <TextBlock x:Name="DetailHint" DockPanel.Dock="Bottom" Margin="10,6" TextWrapping="Wrap"
+                               Foreground="{StaticResource MutedForeground}"
+                               Text="选中一行即可逐字段编辑；Enter 提交并跳到下一个字段。"/>
+                    <Grid>
+                        <ScrollViewer x:Name="FieldScroll" VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled">
+                            <StackPanel x:Name="FieldPanel" Margin="10,8"/>
+                        </ScrollViewer>
+                        <ScrollViewer x:Name="StructureScroll" Visibility="Collapsed" VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled">
+                            <StackPanel x:Name="StructurePanel" Margin="10,8"/>
+                        </ScrollViewer>
+                    </Grid>
+                </DockPanel>
+            </Border>
+        </Grid>
     </DockPanel>
 </Window>

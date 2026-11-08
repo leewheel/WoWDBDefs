@@ -68,22 +68,51 @@ public sealed class DbTable : IDisposable
         using var stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
         var parser = new DBParser(stream);
 
-        var builder = new DBCDBuilder();
-        var (recordType, _) = builder.Build(parser, definition, SanitizeTypeName(tableName), build);
+        var version = ResolveVersion(definition, parser, tableName, build, out var effectiveBuild);
 
-        VersionDefinitions? version = null;
-        if (!string.IsNullOrWhiteSpace(build))
-            Utils.GetVersionDefinitionByBuild(definition, new Build(build), out version);
-        if (version == null && parser.LayoutHash != 0)
-            Utils.GetVersionDefinitionByLayoutHash(definition, parser.LayoutHash.ToString("X8"), out version);
-        if (version == null)
-            throw new DefinitionNotFoundException(tableName, true, "无法确定该文件对应的定义版本。");
+        var builder = new DBCDBuilder();
+        var (recordType, _) = builder.Build(parser, definition, SanitizeTypeName(tableName), effectiveBuild);
 
         var getRecords = typeof(DBParser).GetMethod(nameof(DBParser.GetRecords), Type.EmptyTypes)
             .MakeGenericMethod(recordType);
         var storage = (IDictionary)getRecords.Invoke(parser, null);
 
-        return new DbTable(filePath, tableName, parser, recordType, storage, definition, version.Value, build);
+        return new DbTable(filePath, tableName, parser, recordType, storage, definition, version, effectiveBuild);
+    }
+
+    /// <summary>
+    /// 选版本：显式 BUILD → LayoutHash → 定义里只有一个版本。
+    /// 老格式（WDBC/WDB2，没有 LayoutHash）无法自动判断时抛 <see cref="DefinitionNotFoundException"/>，
+    /// 由界面弹出「选择定义版本」对话框，而不是直接报底层错误。
+    /// </summary>
+    private static VersionDefinitions ResolveVersion(DBDefinition definition, DBParser parser, string tableName,
+        string build, out string effectiveBuild)
+    {
+        effectiveBuild = build;
+        VersionDefinitions? version = null;
+
+        if (!string.IsNullOrWhiteSpace(build))
+            Utils.GetVersionDefinitionByBuild(definition, new Build(build), out version);
+
+        if (version == null && parser.LayoutHash != 0)
+            Utils.GetVersionDefinitionByLayoutHash(definition, parser.LayoutHash.ToString("X8"), out version);
+
+        if (version == null && string.IsNullOrWhiteSpace(build) && definition.versionDefinitions is { Length: 1 })
+            version = definition.versionDefinitions[0];
+
+        if (version == null)
+            throw new DefinitionNotFoundException(tableName, true, "无法根据文件头判断定义版本，请手动选择客户端版本。");
+
+        var resolved = version.Value;
+        if (string.IsNullOrWhiteSpace(effectiveBuild))
+        {
+            if (resolved.builds is { Length: > 0 })
+                effectiveBuild = resolved.builds[0].ToString();
+            else if (resolved.buildRanges is { Length: > 0 })
+                effectiveBuild = resolved.buildRanges[0].minBuild.ToString();
+        }
+
+        return resolved;
     }
 
     private static string SanitizeTypeName(string name)
