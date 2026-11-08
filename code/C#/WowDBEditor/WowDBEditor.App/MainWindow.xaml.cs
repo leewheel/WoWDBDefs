@@ -106,10 +106,11 @@ public partial class MainWindow : Window
             InfoText.Text = "未打开文件";
             return;
         }
-        var version = openedBuild ?? GetVersionLabel();
+        // 优先显示真正生效的版本（区间定义会落在具体某个 build 上），而不是定义块里列的版本
+        var version = openedBuild ?? currentTable.BuildString ?? GetVersionLabel();
         InfoText.Text = $"{currentTable.FilePath}    格式: {currentTable.Format}    版本: {version}    " +
                         $"行数: {currentTable.RowCount:N0}    列数: {currentTable.Columns.Count}    " +
-                        $"Layout: {currentTable.LayoutHash:X8}    Table: {currentTable.TableHash:X8}";
+                        $"记录: {currentTable.RecordSize}B    Layout: {currentTable.LayoutHash:X8}    Table: {currentTable.TableHash:X8}";
     }
 
     private string GetVersionLabel()
@@ -213,19 +214,40 @@ public partial class MainWindow : Window
                 if (table == null)
                 {
                     var definition = definitions.GetDefinition(ex.TableName);
-                    var choices = definitions.ListVersionChoices(definition)
-                        .Select(c => new BuildPickDialog.Choice(c.Label, c.Build)).ToList();
+                    var choices = definitions.ListVersionChoices(definition, ex.FileFormat, ex.FileRecordSize);
                     if (choices.Count == 0)
                         throw new InvalidOperationException($"定义文件 {ex.TableName}.dbd 中没有可用的版本。", ex);
-                    var picker = new BuildPickDialog(choices,
-                        $"{Path.GetFileName(path)} 的文件头里没有 LayoutHash（老格式），无法自动判断版本。\n" +
-                        "请选择对应的客户端版本，之后同表会自动沿用：") { Owner = this };
-                    if (picker.ShowDialog() != true)
-                        return;
-                    build = picker.SelectedBuild;
-                    table = DbTable.Open(path, definitions, build);
-                    settings.BuildOverrides[ex.TableName] = build;
-                    settings.Save();
+
+                    var prompt = $"{Path.GetFileName(path)} 的文件头里没有 LayoutHash（老格式），无法自动判断版本。\n" +
+                                 $"文件记录长度 {ex.FileRecordSize} 字节；列表里带 ✔ 的是长度吻合的版本。\n" +
+                                 "选中条目后也可以在下面直接改成自己的版本号，之后同表自动沿用：";
+
+                    while (table == null)
+                    {
+                        var picker = new BuildPickDialog(choices, prompt) { Owner = this };
+                        if (picker.ShowDialog() != true)
+                            return;
+
+                        var candidate = picker.SelectedBuild;
+                        try
+                        {
+                                table = DbTable.Open(path, definitions, candidate);
+                            build = candidate;
+                            // 记录长度对不上说明版本可能选错了，这种选择不要记住，免得下次静默用错
+                            if (table.RecordSize == table.DefinitionRecordSize)
+                            {
+                                settings.BuildOverrides[ex.TableName] = candidate;
+                                settings.Save();
+                            }
+                        }
+                        catch (Exception openError)
+                        {
+                            MessageBox.Show(this,
+                                $"版本 {candidate} 套不上这个文件：" + Environment.NewLine + openError.Message +
+                                Environment.NewLine + Environment.NewLine + "请换一个版本再试。",
+                                "版本不匹配", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        }
+                    }
                 }
             }
             catch (DefinitionNotFoundException ex) when (!ex.DbdExists)
@@ -242,6 +264,25 @@ public partial class MainWindow : Window
         {
             MessageBox.Show(this, ex.Message, "打开失败", MessageBoxButton.OK, MessageBoxImage.Error);
             return;
+        }
+
+        // 记录长度不一致 = 文件里有定义没覆盖到的字段（自定义列）或版本选错了，必须先提醒
+        if (table.DefinitionRecordSize > 0 && table.RecordSize != table.DefinitionRecordSize)
+        {
+            var nl = Environment.NewLine;
+            var proceed = MessageBox.Show(this,
+                "记录长度与定义不一致：" + nl +
+                $"    文件：{table.RecordSize} 字节" + nl +
+                $"    定义：{table.DefinitionRecordSize} 字节" + nl + nl +
+                "通常说明这个 DBC 带了自定义列，或者版本选错了。" + nl +
+                "继续打开可以查看、修改已有字段，但保存时会按定义重写文件，多出来的列会丢失。" + nl + nl +
+                "确定继续打开吗？（建议先备份原文件）",
+                "记录长度与定义不一致", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+            if (proceed != MessageBoxResult.Yes)
+            {
+                table.Dispose();
+                return;
+            }
         }
 
         LoadTable(table, build);
@@ -742,7 +783,7 @@ public partial class MainWindow : Window
     {
         if (warnings == null || warnings.Count == 0)
             return;
-        MessageBox.Show(this, string.Join("\n", warnings), "导入提示（部分内容已忽略）",
+        MessageBox.Show(this, string.Join(Environment.NewLine, warnings), "导入提示（部分内容已忽略）",
             MessageBoxButton.OK, MessageBoxImage.Information);
     }
 

@@ -24,6 +24,10 @@ public sealed class DbTable : IDisposable
     public string TableName { get; }
     public string Format => parser.Identifier;
     public uint LayoutHash => parser.LayoutHash;
+    /// <summary>文件头里的记录字节数。</summary>
+    public int RecordSize => parser.RecordSize;
+    /// <summary>按当前定义算出的记录字节数，与 <see cref="RecordSize"/> 不一致说明存在自定义列。</summary>
+    public int DefinitionRecordSize { get; private set; }
     public uint TableHash => parser.TableHash;
     public DBDefinition Definition { get; }
     public VersionDefinitions Version { get; }
@@ -51,6 +55,13 @@ public sealed class DbTable : IDisposable
                         && m.GetParameters()[1].ParameterType == typeof(Stream))
             .MakeGenericMethod(recordType);
 
+        Build resolvedBuild = null;
+        if (!string.IsNullOrWhiteSpace(buildString))
+        {
+            try { resolvedBuild = new Build(buildString); }
+            catch { resolvedBuild = null; }
+        }
+        DefinitionRecordSize = RecordSizeEstimator.Estimate(definition, version, resolvedBuild);
         Columns = BuildColumns(version);
 
         var idField = recordFields.FirstOrDefault(f => f.IsDefined(typeof(IndexAttribute)))
@@ -81,8 +92,8 @@ public sealed class DbTable : IDisposable
     }
 
     /// <summary>
-    /// 选版本：显式 BUILD → LayoutHash → 定义里只有一个版本。
-    /// 老格式（WDBC/WDB2，没有 LayoutHash）无法自动判断时抛 <see cref="DefinitionNotFoundException"/>，
+    /// 选版本：显式 BUILD → LayoutHash → 记录长度唯一匹配（老格式） → 定义里只有一个版本。
+    /// 都判断不出来时抛 <see cref="DefinitionNotFoundException"/>，
     /// 由界面弹出「选择定义版本」对话框，而不是直接报底层错误。
     /// </summary>
     private static VersionDefinitions ResolveVersion(DBDefinition definition, DBParser parser, string tableName,
@@ -90,6 +101,7 @@ public sealed class DbTable : IDisposable
     {
         effectiveBuild = build;
         VersionDefinitions? version = null;
+        var isWdbc = string.Equals(parser.Identifier, "WDBC", StringComparison.OrdinalIgnoreCase);
 
         if (!string.IsNullOrWhiteSpace(build))
             Utils.GetVersionDefinitionByBuild(definition, new Build(build), out version);
@@ -97,19 +109,48 @@ public sealed class DbTable : IDisposable
         if (version == null && parser.LayoutHash != 0)
             Utils.GetVersionDefinitionByLayoutHash(definition, parser.LayoutHash.ToString("X8"), out version);
 
+        // 老格式（WDBC/WDB2-WDB4）文件头没有 LayoutHash，但记录长度是很好的指纹：
+        // 只有一个版本定义算出来的记录长度与之相符，就直接用它，省掉手工选版本。
+        if (version == null && string.IsNullOrWhiteSpace(build) && parser.LayoutHash == 0 && parser.RecordSize > 0)
+        {
+            // WDBC 只可能是 3.3.5(12340) 及更早，用它排掉字节数碰巧相同的现代版本，避免误判
+            var matches = new List<VersionDefinitions>();
+            foreach (var candidate in definition.versionDefinitions)
+            {
+                var probeBuild = isWdbc
+                    ? RecordSizeEstimator.MaxBuildAtMost(candidate, RecordSizeEstimator.WdbcMaxBuild)
+                    : RecordSizeEstimator.MaxBuild(candidate);
+                if (isWdbc && probeBuild == null)
+                    continue; // 整个版本都晚于 3.3.5，不可能是 WDBC 文件
+                if (RecordSizeEstimator.Estimate(definition, candidate, probeBuild) == parser.RecordSize)
+                    matches.Add(candidate);
+            }
+            if (matches.Count == 1)
+                version = matches[0];
+        }
+
         if (version == null && string.IsNullOrWhiteSpace(build) && definition.versionDefinitions is { Length: 1 })
             version = definition.versionDefinitions[0];
 
         if (version == null)
-            throw new DefinitionNotFoundException(tableName, true, "无法根据文件头判断定义版本，请手动选择客户端版本。");
+            throw new DefinitionNotFoundException(tableName, true, "无法根据文件头判断定义版本，请手动选择客户端版本。")
+            {
+                FileFormat = parser.Identifier,
+                FileRecordSize = parser.RecordSize
+            };
 
         var resolved = version.Value;
         if (string.IsNullOrWhiteSpace(effectiveBuild))
         {
-            if (resolved.builds is { Length: > 0 })
-                effectiveBuild = resolved.builds[0].ToString();
-            else if (resolved.buildRanges is { Length: > 0 })
-                effectiveBuild = resolved.buildRanges[0].minBuild.ToString();
+            // 区间版本取上界：DBD 里整段共用一个定义，上界最接近当前客户端。
+            // 但同一块定义可能同时覆盖 3.3.5 和 4.0，WDBC 文件必须落在 3.3.5 以内，
+            // 否则 locstring 宽度会按 4.0 算（1 列），整表列数就错了。
+            var chosen = isWdbc
+                ? RecordSizeEstimator.MaxBuildAtMost(resolved, RecordSizeEstimator.WdbcMaxBuild)
+                : RecordSizeEstimator.MaxBuild(resolved);
+            chosen ??= RecordSizeEstimator.MaxBuild(resolved);
+            if (chosen != null)
+                effectiveBuild = chosen.ToString();
         }
 
         return resolved;
