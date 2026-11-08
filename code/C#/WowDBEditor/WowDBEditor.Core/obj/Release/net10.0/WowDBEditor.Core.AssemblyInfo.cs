@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("WowDBEditor.Core")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+61bfb6d401b5ec609d8d19c78511957ebf79bae5")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+7d64be697cb1e195ef7615a08c0038c820e3271b")]
 [assembly: System.Reflection.AssemblyProductAttribute("WowDBEditor.Core")]
 [assembly: System.Reflection.AssemblyTitleAttribute("WowDBEditor.Core")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

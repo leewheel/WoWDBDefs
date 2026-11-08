@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Linq;
 using System.Windows;
 using System.Windows.Threading;
 
@@ -24,12 +25,18 @@ public partial class App : Application
     private static string Describe(Exception exception)
     {
         var lines = new List<string>();
-        for (var current = exception; current != null; current = current.InnerException)
-        {
+        var current = exception;
+        for (var depth = 0; current != null && depth < 4; depth++, current = current.InnerException)
             lines.Add(current.GetType().Name + ": " + current.Message);
-            if (lines.Count >= 4)
-                break;
+
+        var stack = exception.StackTrace;
+        if (!string.IsNullOrEmpty(stack))
+        {
+            var frames = stack.Split('\n').Take(6).Select(l => l.Trim());
+            lines.Add("— 调用栈 —");
+            lines.AddRange(frames);
         }
-        return string.Join("\n\n", lines);
+
+        return string.Join("\n", lines);
     }
 }

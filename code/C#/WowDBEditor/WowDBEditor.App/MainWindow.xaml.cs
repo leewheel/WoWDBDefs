@@ -177,9 +177,7 @@ public partial class MainWindow : Window
             Title = "打开 DBC/DB2 文件",
             Filter = "DBC/DB2 文件 (*.dbc;*.db2;*.adb;*.wdb)|*.dbc;*.db2;*.adb;*.wdb|所有文件 (*.*)|*.*"
         };
-        if (!string.IsNullOrEmpty(settings.LastOpenDirectory) && Directory.Exists(settings.LastOpenDirectory))
-            dialog.InitialDirectory = settings.LastOpenDirectory;
-        if (dialog.ShowDialog(this) == true)
+        if (SafeDialog.Show(dialog, this, settings.LastOpenDirectory))
             OpenPath(dialog.FileName);
     }
 
@@ -247,7 +245,7 @@ public partial class MainWindow : Window
         }
 
         LoadTable(table, build);
-        settings.LastOpenDirectory = Path.GetDirectoryName(Path.GetFullPath(path));
+        settings.LastOpenDirectory = SafeDialog.Normalize(Path.GetDirectoryName(Path.GetFullPath(path)));
         settings.AddRecentFile(path);
         settings.Save();
         RebuildRecentMenu();
@@ -406,7 +404,7 @@ public partial class MainWindow : Window
                 Filter = "DBC/DB2 文件 (*.dbc;*.db2)|*.dbc;*.db2|所有文件 (*.*)|*.*",
                 FileName = Path.GetFileName(path)
             };
-            if (dialog.ShowDialog(this) != true)
+            if (!SafeDialog.Show(dialog, this, Path.GetDirectoryName(path)))
                 return;
             path = dialog.FileName;
         }
@@ -620,15 +618,13 @@ public partial class MainWindow : Window
             Filter = "CSV 文件 (*.csv)|*.csv",
             FileName = currentTable.TableName + ".csv"
         };
-        if (!string.IsNullOrEmpty(settings.LastExportDirectory) && Directory.Exists(settings.LastExportDirectory))
-            dialog.InitialDirectory = settings.LastExportDirectory;
-        if (dialog.ShowDialog(this) != true)
+        if (!SafeDialog.Show(dialog, this, settings.LastExportDirectory))
             return;
 
         try
         {
             CsvIO.Export(currentTable, dataTable, dialog.FileName);
-            settings.LastExportDirectory = Path.GetDirectoryName(Path.GetFullPath(dialog.FileName));
+            settings.LastExportDirectory = SafeDialog.Normalize(Path.GetDirectoryName(Path.GetFullPath(dialog.FileName)));
             settings.Save();
             SetStatus($"已导出 CSV：{dialog.FileName}");
         }
@@ -647,9 +643,7 @@ public partial class MainWindow : Window
             Title = "从 CSV 导入",
             Filter = "CSV 文件 (*.csv)|*.csv|所有文件 (*.*)|*.*"
         };
-        if (!string.IsNullOrEmpty(settings.LastExportDirectory) && Directory.Exists(settings.LastExportDirectory))
-            dialog.InitialDirectory = settings.LastExportDirectory;
-        if (dialog.ShowDialog(this) != true)
+        if (!SafeDialog.Show(dialog, this, settings.LastExportDirectory))
             return;
 
         var mode = MessageBox.Show(this,
@@ -686,15 +680,13 @@ public partial class MainWindow : Window
             Filter = "SQL 文件 (*.sql)|*.sql",
             FileName = currentTable.TableName + ".sql"
         };
-        if (!string.IsNullOrEmpty(settings.LastExportDirectory) && Directory.Exists(settings.LastExportDirectory))
-            dialog.InitialDirectory = settings.LastExportDirectory;
-        if (dialog.ShowDialog(this) != true)
+        if (!SafeDialog.Show(dialog, this, settings.LastExportDirectory))
             return;
 
         try
         {
             SqlDump.Write(currentTable, dataTable, dialog.FileName, currentTable.TableName, modeDialog.Options);
-            settings.LastExportDirectory = Path.GetDirectoryName(Path.GetFullPath(dialog.FileName));
+            settings.LastExportDirectory = SafeDialog.Normalize(Path.GetDirectoryName(Path.GetFullPath(dialog.FileName)));
             settings.Save();
             SetStatus($"已导出 SQL（{(modeDialog.Options.IncludeDrop ? "完整重建" : "幂等增量")}）：{dialog.FileName}");
         }
@@ -713,9 +705,7 @@ public partial class MainWindow : Window
             Title = "从 SQL 文件导入",
             Filter = "SQL 文件 (*.sql)|*.sql|所有文件 (*.*)|*.*"
         };
-        if (!string.IsNullOrEmpty(settings.LastExportDirectory) && Directory.Exists(settings.LastExportDirectory))
-            dialog.InitialDirectory = settings.LastExportDirectory;
-        if (dialog.ShowDialog(this) != true)
+        if (!SafeDialog.Show(dialog, this, settings.LastExportDirectory))
             return;
 
         var mode = MessageBox.Show(this,
